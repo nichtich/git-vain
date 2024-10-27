@@ -1,8 +1,10 @@
+# git vain
+
 Q: Would you lose any work if your local clone of a git repository were lost?  
+
 A: Run this script to find out.
 
-The script is useful to check the state of your project and what needs to be cleaned up.
-It checks for
+The script is useful to check the state of your project and what needs to be cleaned up. It checks for
 
  * whether this is a git repository at all  
  * untracked files  
@@ -42,18 +44,24 @@ Add this to your `~/.gitconfig`:
 
 ```
 [alias]
-    isclean = !/path/to/git-isclean
+    vain = !/path/to/git-vain
 ```
 
 Now you can run
-`git isclean`
+
+`git vain`
+
 or 
-`git isclean -a`
+
+`git vain -a`
+
 from any repository.
 
 Limitations:
- * Misses empty subdirectories---including those with only dot files!
- * Assumes your only remote is origin.
 
-License: CC BY SA [creative commons, attribution, share-alike]
-By Ben Klemens. See http://modelingwithdata.org/arch/00000194.htm for discussion.
+* Misses empty subdirectories---including those with only dot files!
+* Assumes your only remote is origin.
+
+## License
+
+[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/), [original script by Ben Klemens](http://modelingwithdata.org/arch/00000194.htm), modifications [by Ben](https://github.com/b-k/git-isclean/tree/master)
