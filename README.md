@@ -57,7 +57,12 @@ location and reference in `~/.gitconfig`:
     vain = !/path/to/git-vain
 ```
 
-Now you can run `git vain` like any other git subcommand.
+## Usage
+
+Run `git vain` like any other git subcommand, either in the root of a working
+tree directory, or by giving the directory with git option `-C`:
+
+`git -C $dir vain`
 
 Limitations:
 

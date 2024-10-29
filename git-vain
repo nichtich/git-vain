@@ -55,8 +55,9 @@ result() {
 
 
 # check whether this is the root of a git repository
-[ -d .git ] && git status > /dev/null 2> /dev/null
-result "$(pwd) is root of a git repository" "$(pwd) is not root of a git repository" || exit 1
+pwd=`pwd`
+[[ -d .git ]] && git status > /dev/null 2> /dev/null
+result "$pwd is root of a git repository" "$pwd is not root of a git repository" || exit 1
 
 # check whether untracked files exist
 [ `git ls-files --others --exclude-standard | wc -l` -eq 0 ]
