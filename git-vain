@@ -1,17 +1,34 @@
-ABOUT_THIS_SCRIPT="
+#!/bin/bash
+set -uo pipefail
 
-Q: Would you lose any work if your local clone of a git repository were lost?
-A: Run this script to find out.
+usage() {
+    echo "Usage: git-vain [-a] [-v] [-q] [-h]"
+    echo
+    echo "Check whether a git repository can be deleted."
+    echo
+    echo "Options:"
+    echo "-a    automatically run some cleanup"
+    echo "-v    be more verbose"
+    echo "-q    early quit"
+    echo "-l    local checks only (no remote, no backup!)"
+    echo "-h    show this help"
+    exit
+}
 
-Please see the Readme.md for more discussion.
+Action=
+Verbose=
+Local=
+Quit=
 
-License: CC BY SA [creative commons, attribution, share-alike]
-By Ben Klemens. See http://modelingwithdata.org/arch/00000194.htm for discussion.
-
-Some portions based on:
-http://0xfe.blogspot.com/2010/04/adding-git-status-information-to-your.html
-http://0xfe.blogspot.com/2010/04/improved-git-enabled-shell-prompt.html
-"
+while getopts "havlq" opt; do
+    case "$opt" in
+        h) usage ;;
+        a) Action=1 ;;
+        v) Verbose=1 ;;           
+        l) Local=1 ;;
+        q) Quit=1 ;;
+    esac
+done
 
 green="\033[0;32m"
 bold_green="\033[1;32m"
@@ -21,140 +38,127 @@ red="\033[0;31m"
 bold_red="\033[1;31m"
 no_color="\033[0m"
 
-Red_X="${bold_red}✘${no_color}"
-Check="${bold_cyan}✓${no_color}"
-Divider="${bold_cyan}―――${no_color}"
 Dirty=0
 
-test "$1" = "-a" 
-Action=$?
-
-onetest () { if eval $3 ; then printf "$Red_X $2\n"; Dirty=1; else printf "$Check $1\n"; fi }
-
-# unpushed branches, which is the list of remote branches that are not synced to the local HEAD.  
-# Original author had:
-## Returns "unpushed:N" where N is the number of unpushed local and remote branches (if any).
-##  local unpushed=`expr $( (git branch --no-color -r --contains $1; git branch --no-color -r) | sort | uniq -u | wc -l )`
-# I just need to know that a given branch is contained by at least one remote.
-# Assume the network of repos is not super-complicated so there's just the origin
-allbranches(){
-  for i in `git branch --no-color | grep -v "(HEAD.*)" | sed 's/\* //'`; do
-      unpushed=`expr $( (git branch --no-color -r --contains $i) | wc -l )`
-      onetest "$i pushed to origin" "$i not pushed to origin" '[ "$unpushed" = "0" -o "`git branch -r`" = "" ]'
-      if [ "$unpushed" = "0" ] || [ "`git branch -r`" = "" ] ; then
-      if [ $Action = 0 ] ; then
-        echo -n "Run git push origin $i? [y/n] "
-        read yesno
-        if [ "$yesno" != "n" -a "$yesno" != 'N' ]; then
-            git push origin $i
-        fi
-      fi
-      fi
-  done
+result() {
+    if [ $? -eq 0 ]; then
+        printf "${bold_cyan}✓${no_color} $1\n"
+        return 0
+    else
+        printf "${bold_red}✘${no_color} $2\n"
+        Dirty=$((Dirty + 1))
+        [[ -z $Verbose || -z "${3:-}" ]] || eval "$3"
+        [[ -z $Quit ]] || exit 1
+        return 1
+    fi
 }
 
-# Optional test to add for unmerged branches, if that's your workflow.
-#  local unmerged=`expr $(git branch --no-color -a --no-merged | wc -l)`
-#  onetest "no unmerged files" "unmerged files" '[ "$unmerged" != "0" ]'
 
-# main sequence: run each test
-if [ "$1" = "-h" ]; then echo "Check whether a git repository can be deleted. Use -a to automatically run some next steps."; fi
+# check whether this is the root of a git repository
+[ -d .git ] && git status > /dev/null 2> /dev/null
+result "$(pwd) is root of a git repository" "$(pwd) is not root of a git repository" || exit 1
 
-is_repository=$(git status > /dev/null  2> /dev/null; echo $?)
-if [ $is_repository -gt 0 ]; then
-    printf "$Red_X Not a git repository\n"; Dirty=1;
-    if [ $Action -eq 0 ] ; then
-         echo -n "Initialize repository? [y/n] "
-         read yesno
-         if [ "$yesno" != "n" -a "$yesno" != 'N' ]; then
-             git init
-         fi
-    fi
-fi
+# check whether untracked files exist
+[ `git ls-files --others --exclude-standard | wc -l` -eq 0 ]
+result "no untracked files" "untracked files" "git ls-files --others --exclude-standard"
 
-if [ $is_repository -eq 0 ]; then #skip to the end if not a repository
+# check whether unstaged changes exist
+[ "$(git diff --shortstat 2> /dev/null)" == "" -a "$(git diff --staged --shortstat 2> /dev/null)" == "" ]
+result "no unstaged diffs" "diffs to commit" "git --no-pager diff"
 
-Untracked=$Dirty
-if [ $Action -eq 0 ] && [ "$Untracked" != 0 ]; then git status -s; Action=1; fi;
-
-
-onetest "no untracked files" "untracked files" '[ `git ls-files --others --exclude-standard | wc -l` -ne 0 ]'
-Untracked=$Dirty
-if [ $Action = 0 ] && [ "$Untracked" != 0 ]; then git status -s; Action=1; fi;
-
-onetest "no unstaged diffs" "diffs to commit" '[ "$(git diff --shortstat 2> /dev/null)" != "" -o "$(git diff --staged --shortstat 2> /dev/null)" != "" ]'
-Diffs=$((Dirty - Untracked))
-if [ $Action = 0 ] && [ "$Diffs" != 0 ]; then git --no-pager diff; Action=1; fi;
-
-stash=`expr $(git stash list 2>/dev/null| wc -l)` # Return the number of stashed states, not just 0|1.
-onetest "no pending stashes" "stashes pending" '[ "$stash" != "0" ]'
-if [ $Action = 0 ] && [ "$stash" != "0" ] ; then
+# count number of stashed states
+stash=`expr $(git stash list 2>/dev/null| wc -l)`
+[ "$stash" == "0" ]
+result "no pending stashes" "stashes pending"
+if [[ $? -eq 1 && $Verbose -eq 1 ]]; then
     if [ $stash -eq 1 ]; then
         git --no-pager stash show -p
     elif [ $stash != 0 ]; then
         git stash list
     fi
-    Action=1
 fi
 
-unpushed_tags=`git show-ref --tags | grep -v -F "$(git ls-remote --tags origin | grep -v '\^{}' | cut -f 2)" | sed 's#.*tags/##'`
-
-onetest "no unpushed tags" "unpushed tags: $unpushed_tags" '[ ! -z "$unpushed_tags" ]'
-if [ $Action = 0 ] && [ ! -z "$unpushed_tags" ] ; then
-    echo -n "Push all tags? [y/n] "
-    read yesno
-    if [ "$yesno" != "n" -a "$yesno" != 'N' ]; then
-         git push --tags
-    fi
-    Action=1
-fi
-
-detached=`grep -v "^ref" "$(git rev-parse --show-toplevel)/.git/HEAD" |wc -l`
-onetest "head attached" "detached head" '[ $detached -gt 0 ]'
-
-if [ $Action = 0 ] && [ $detached -gt 0 ] ; then
-    if [ $detached -eq 1 ]; then
-     echo -n "Merge detached head into master? [y/n] "
-     read yesno
-    if [ "$yesno" != "n" -a "$yesno" != 'N' ]; then
-        git checkout -b HEADregraft
-        git commit -m "Check in HEAD to merge"
-        git checkout master
-        git merge HEADregraft
-        git branch -d HEADregraft
-     fi
-     Action=1
+# check whether repository has a detached head
+detached=`grep -v "^ref" "$(git rev-parse --show-toplevel)/.git/HEAD" | wc -l`
+[ $detached -eq 0 ]
+result "head attached" "detached head"
+if [[ $? -eq 1 && $Action -eq 1 ]]; then
+    if [[ `git branch --list main` ]]; then
+        echo -n "Merge detached head into main? [y/n]"
+        read yesno
+        if [ "$yesno" != "n" -a "$yesno" != 'N' ]; then
+            git checkout -b HEADtmp
+            git commit -m "Check in HEAD to merge"
+            git checkout main
+            git merge HEADtmp
+            git branch -d HEADtmp
+         fi
     else
-      echo "Multiple detached HEADs. This is biologically impossible."
+        printf "${bold_red}✘${no_color} main branch does not exist\n"
     fi
 fi
 
-allbranches
+# local branches unmerged into the current branch
+current=`git branch --show-current`
+unmerged=`git branch --no-color --no-merged`
+
+for branch in $current $unmerged; do
+    upstream=$(git rev-parse --abbrev-ref $branch@{upstream} 2>/dev/null)
+    result "$branch tracks $upstream" "$branch is not tracked"
+    if [[ $? -eq 0 ]]; then
+        ahead=$(git rev-list --left-right --count $branch...$upstream | awk '{print $1}')
+        [ $ahead -eq 0 ]
+        result "$branch is in sync with $upstream" "$branch is $ahead commits ahead $upstream"
+        if [[ $? -eq 1 && $Action -eq 1 ]]; then
+            echo -n "Run git push origin $branch? [y/n] "
+            read yesno
+            if [ "$yesno" != "n" -a "$yesno" != 'N' ]; then
+                git push origin $branch
+            fi
+        fi
+
+    fi
+done
+
+
+if [ -z $Local ]; then
+    # check whether unpushed tags exist
+    unpushed_tags=`git show-ref --tags | grep -v -F "$(git ls-remote --tags origin | grep -v '\^{}' | cut -f 2)" | sed 's#.*tags/##'`
+    [ -z "$unpushed_tags" ]
+    result "no unpushed tags" "unpushed tags: $unpushed_tags"
+    if [[ $? == 1 && $Action == 1 ]]; then
+        echo -n "Push all tags? [y/n] "
+        read yesno
+        if [ "$yesno" != "n" -a "$yesno" != 'N' ]; then
+             git push --tags
+        fi
+    fi
+fi
 
 # run this very program foreach submodule
 if [ -e "`git rev-parse --show-toplevel`/.gitmodules" ] ; then
-    echo -e "${Divider}Checking submodules"
-    if [ $Action = 0 ] ; then
-        git submodule foreach "$0 -a"
-    else
-        git submodule foreach "$0"
+    echo "Submodules are not checked yet!"
+    # TODO: 
+    #echo -e "${Divider}Checking submodules"
+    #if [ $Action = 0 ] ; then
+    #    git submodule foreach "$0 -a"
+    #else
+    #    git submodule foreach "$0"
+    #fi
+    #Subdirty=$?
+    #Dirty=$((Dirty + $Subdirty))
+fi
+
+# OK, checks done. Check to remove working directory
+if [[ $Dirty -eq 0 && $Action -eq 1 ]]; then
+    dir=$(basename $(pwd))
+    echo -n "Everything looks fine. Remove working directory $dir? [y/n] "
+    read yesno
+    if [ "$yesno" != "n" -a "$yesno" != 'N' ]; then
+        cd ".."
+        rm -rf "$dir"
+        # TODO: manually cd ..
     fi
-    Subdirty=$?
-    Dirty=$((Dirty + $Subdirty))
-#else: submodules are so infrequently used, don't even mention this test if no .gitmodules.
-    #$onetest "no submodules to check" "--" false
 fi
 
-#OK, checks done. Check to remove working directory
-if [ "$1" = "-a" ] && [ "$Dirty" = 0 ]; then
-     WD="`git rev-parse --show-toplevel`"
-     echo -n "Removing $WD. OK? [y/n] "
-     read yesno
-     if [ "$yesno" != "n" -a "$yesno" != 'N' ]; then
-        cd "$WD/.."
-        rm -rf "$WD"
-     fi
-fi
-
-fi #if isnt_repository we skipped almost all of the above
-[ $Dirty -eq 0 ] #return value
+exit $Dirty
